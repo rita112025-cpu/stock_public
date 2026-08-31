@@ -5,6 +5,6 @@ SRC="${1:-tw-stock-analyzer.html}"
 awk '/ANALYTICS-CORE-START/,/ANALYTICS-CORE-END/' "$SRC" > core.js
 cat >> core.js << 'EXPORTS'
 module.exports={toNum,normDate,validDate,parseInput,SMA,EMA,RSI,rsiValue,KD,MACD,BOLL,
-  computeStats,buildIndicators,lastCross,maArrangement,esc,volLabel,decodeBytes};
+  computeStats,buildIndicators,lastCross,maArrangement,signalConsensus,esc,volLabel,decodeBytes};
 EXPORTS
 echo "core.js 產生完成（$(wc -l < core.js) 行）"
