@@ -850,21 +850,21 @@ function signalConsensus(rows,ind){
 }
 
 /* ---------- backtest ---------- */
-/* T 日收盤訊號 → T+1 開盤進場 → T+N 收盤出場（N = holdDays）
+/* T 日收盤訊號 → T+1 開盤進場 → T+1+N 收盤出場（持有 N 個交易日）
    不重複開倉：持有期間跳過後續訊號 */
 function backtest(rows, ind, signalFn, holdDays){
   var trades=[], n=rows.length, nextEligible=0;
-  for(var i=0;i+holdDays<n;i++){
+  for(var i=0;i+1+holdDays<n;i++){
     if(i<nextEligible) continue;
     if(!signalFn(rows,ind,i)) continue;
     var entryBar=rows[i+1];
     if(!entryBar||entryBar.open==null) continue;
-    var exitBar=rows[i+holdDays];
+    var exitBar=rows[i+1+holdDays];
     if(!exitBar||exitBar.close==null) continue;
     var ret=(exitBar.close-entryBar.open)/entryBar.open;
     trades.push({signalDate:rows[i].date,entryDate:entryBar.date,entryPrice:entryBar.open,
                  exitDate:exitBar.date,exitPrice:exitBar.close,ret:ret});
-    nextEligible=i+holdDays+1;
+    nextEligible=i+holdDays+2;
   }
   return {trades:trades,stats:calcBtStats(trades)};
 }
@@ -1114,10 +1114,10 @@ function renderBacktest(){
     stat("勝率",pct(s.winRate,1),s.winRate>=0.5,s.winRate<0.5)+
     stat("平均報酬",pct(s.avgReturn),s.avgReturn>0,s.avgReturn<0)+
     stat("中位數報酬",pct(s.medianReturn),s.medianReturn>0,s.medianReturn<0)+
-    stat("最大獲利",pct(s.maxGain),true,false)+
-    stat("最大虧損",pct(s.maxLoss),false,true)+
+    stat("最大獲利",pct(s.maxGain),s.maxGain>0,s.maxGain<0)+
+    stat("最大虧損",pct(s.maxLoss),s.maxLoss>0,s.maxLoss<0)+
     stat("最大連敗",s.maxConsecLoss,false,s.maxConsecLoss>=3)+
-    stat("MDD",pct(s.mdd),false,s.mdd<-0.1)+
+    stat("策略 MDD",pct(s.mdd),false,s.mdd<-0.1)+
     '</div>';
   function stat(lbl,val,pos,neg){
     var cls="bs-v"+(pos?" pos":neg?" neg":"");
@@ -1129,9 +1129,9 @@ function renderBacktest(){
   for(var i=0;i<SHOW;i++){
     var t=trades[i],win=t.ret>0;
     rows2+='<tr class="'+(win?"win":"loss")+'">'+
-      '<td>'+t.signalDate+'</td><td>'+t.entryDate+'</td>'+
+      '<td>'+esc(t.signalDate)+'</td><td>'+esc(t.entryDate)+'</td>'+
       '<td>'+t.entryPrice.toFixed(2)+'</td>'+
-      '<td>'+t.exitDate+'</td>'+
+      '<td>'+esc(t.exitDate)+'</td>'+
       '<td>'+t.exitPrice.toFixed(2)+'</td>'+
       '<td>'+(t.ret>=0?"+":"")+pct(t.ret,2)+'</td></tr>';
   }

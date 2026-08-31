@@ -486,16 +486,24 @@ is('[25] always-on hold=5 non-overlap: first trade signal day','2025-01-01',res5
 is('[25] always-on hold=5 non-overlap: second signal after first exit',
    res5.trades[1].signalDate>res5.trades[0].exitDate,true);
 
-// Look-ahead bias: signal at last row → no trade (no T+1 entry bar)
+// Look-ahead bias: loop bound is i+1+holdDays<n, so i<n-1-holdDays
+// Signal at last bar (i=n-1) → outside loop → 0 trades
 var lastOnlyFn=function(r,ind,i){return i===r.length-1;};
 var resLast=C.backtest(btRows,btInd,lastOnlyFn,1);
 is('[25] signal at last bar → no trade',resLast.trades.length,0);
 
-// Signal at rows.length-2 with hold=1: exitIdx = rows.length-2+1 = rows.length-1, valid
-var nearLastFn=function(r,ind,i){return i===r.length-2;};
-var resNearLast=C.backtest(btRows,btInd,nearLastFn,1);
-is('[25] signal at last-1 hold=1 → 1 trade',resNearLast.trades.length,1);
-is('[25] entry at last-1+1=last bar',resNearLast.trades[0].entryDate,btRows[btRows.length-1].date);
+// Signal one step inside boundary: i=n-2-holdDays → exitIdx=i+1+holdDays=n-1 (last bar)
+// For holdDays=1, n=60: i=57, entry=58, exit=59
+var boundaryFn=function(r,ind,i){return i===r.length-2-1;};// n-3 for holdDays=1
+var resBoundary=C.backtest(btRows,btInd,boundaryFn,1);
+is('[25] signal at last eligible index → 1 trade',resBoundary.trades.length,1);
+is('[25] exit at last bar',resBoundary.trades[0].exitDate,btRows[btRows.length-1].date);
+
+// Signal one step past boundary: i=n-1-holdDays → loop excludes this → 0 trades
+// For holdDays=1, n=60: i=58, loop needs i<58, so i=58 is excluded
+var pastBoundaryFn=function(r,ind,i){return i===r.length-1-1;};// n-2 for holdDays=1
+var resPastBoundary=C.backtest(btRows,btInd,pastBoundaryFn,1);
+is('[25] signal just past eligible boundary → no trade',resPastBoundary.trades.length,0);
 
 // Known return verification
 // Manually place 3 signals: returns 0.10, -0.05, 0.08
@@ -509,9 +517,9 @@ is('[25] maxGain',parseFloat(btS.maxGain.toFixed(4)),0.10);
 is('[25] maxLoss',parseFloat(btS.maxLoss.toFixed(4)),-0.05);
 is('[25] maxConsecLoss',btS.maxConsecLoss,1); // only one loss in sequence
 
-// MDD: 1 → 1.10 (peak) → 1.045 → 1.1286; dd at step2=(1.045-1.10)/1.10=-0.05
-is('[25] mdd <= 0',btS.mdd<=0,true);
-is('[25] mdd >= -0.06 for this sequence',btS.mdd>=-0.06,true);
+// MDD: equity 1→1.10 (peak)→1.10*0.95=1.045→1.045*1.08=1.1286
+// Worst drawdown: (1.045-1.10)/1.10 = -0.055/1.10 = -0.05 exactly
+is('[25] mdd exact (peak 1.10, trough 1.045)',parseFloat(btS.mdd.toFixed(5)),-0.05);
 
 console.log('\n[26] btSignalGoldenCross / btSignalMaBull (mock indicators)');
 // Use mock indicator arrays to test signal logic independently of data generation
