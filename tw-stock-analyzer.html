@@ -122,6 +122,27 @@ td.num,th.num{font-family:var(--mono)}
 .sig .f{font-family:var(--mono);font-size:14.5px;color:var(--ink2);margin-top:2px;word-break:break-word}
 .sig.on{border-left-color:var(--mark)}
 
+/* ---------- signal consensus ---------- */
+.consensus{margin-bottom:14px;padding:10px 12px;border:1px solid var(--rule-soft);border-radius:2px;background:#FAFBFC}
+.con-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:15px}
+.con-dim{width:4.2em;color:var(--ink3);font-size:13px;flex-shrink:0;letter-spacing:.04em}
+.con-bar-wrap{flex:1;height:7px;background:var(--rule-soft);border-radius:4px;position:relative;overflow:hidden}
+.con-fill{position:absolute;top:0;height:100%;border-radius:4px}
+.con-fill-pos{background:var(--up)}
+.con-fill-neg{background:var(--down)}
+.con-fill-neu{background:var(--ink3);opacity:.35}
+.con-label{font-size:13px;color:var(--ink2);font-family:var(--mono);min-width:4em;text-align:right;flex-shrink:0}
+.con-verdict{font-size:15.5px;font-weight:600;padding:8px 0 2px;border-top:1px solid var(--rule-soft);margin-top:6px;color:var(--ink)}
+.con-note{font-size:13px;color:var(--ink3);margin-top:3px}
+
+/* ---------- quality badge ---------- */
+.qbadge{display:inline-block;font-family:var(--mono);font-size:13px;font-weight:700;
+  padding:1px 7px;border-radius:2px;border:1px solid currentColor;vertical-align:middle;margin-left:6px}
+.qbadge-A{color:var(--ok);border-color:var(--ok)}
+.qbadge-B{color:var(--mark);border-color:var(--mark)}
+.qbadge-C{color:var(--flag);border-color:var(--flag)}
+.qbadge-D{color:var(--up);border-color:var(--up)}
+
 /* ---------- audit ---------- */
 .audit{font-family:var(--mono);font-size:14.5px;color:var(--ink2)}
 .audit dt{color:var(--ink3);margin-top:7px;font-size:13.5px;letter-spacing:.05em}
@@ -675,6 +696,52 @@ function decodeBytes(buf,forced){
     catch(e2){ return {text:new TextDecoder("utf-8").decode(buf),enc:"UTF-8（強制，可能有亂碼）"}; }
   }
 }
+/* 技術面總評：多維訊號彙整（純函式，不含 UI 邏輯） */
+function signalConsensus(rows,ind){
+  var i=rows.length-1, I=ind;
+
+  /* 趨勢：均線排列為主，最近 20 日內交叉為次 */
+  var ma=maArrangement(I.ma5[i],I.ma20[i],I.ma60[i]);
+  var trendScore=ma.on?(I.ma5[i]>I.ma60[i]?1:-1):0;
+  var c=lastCross(I.ma5,I.ma20);
+  if(c&&(i-c.i)<=20) trendScore=Math.max(-1,Math.min(1,trendScore+(c.dir==="up"?0.35:-0.35)*(1-(i-c.i)/20)));
+
+  /* 動能：MACD 柱狀體 + DIF 方向 */
+  var momScore=0;
+  if(I.osc[i]!==null&&I.dif[i]!==null)
+    momScore=I.osc[i]>0&&I.dif[i]>0?1:I.osc[i]>0?0.4:I.osc[i]<0&&I.dif[i]<0?-1:-0.4;
+
+  /* 超買超賣：RSI(14) + K 值平均，正規化到 [-1,1] */
+  var hp=[];
+  if(I.rsi14[i]!==null) hp.push((I.rsi14[i]-50)/50);
+  if(I.K[i]!==null) hp.push((I.K[i]-50)/50);
+  var heatScore=hp.length?Math.max(-1,Math.min(1,hp.reduce(function(a,b){return a+b;},0)/hp.length)):0;
+
+  /* 量能：最新量相對 20 日均量 */
+  var volScore=0;
+  if(I.vma20[i]&&I.vma20[i]>0) volScore=Math.max(-1,Math.min(1,(rows[i].volume/I.vma20[i]-1)*1.5));
+
+  /* 標籤 */
+  function lbl(s,th,pos,neg,neu){ return s>th?pos:s<-th?neg:neu; }
+  var trendLabel=lbl(trendScore,0.25,"多頭","空頭","中性");
+  var momLabel  =lbl(momScore,  0.25,"多頭","空頭","中性");
+  var heatLabel =lbl(heatScore, 0.35,"過熱","過冷","正常");
+  var volLabel2 =lbl(volScore,  0.25,"偏高","偏弱","正常");
+
+  /* 綜合判斷文字 */
+  var parts=[lbl(trendScore,0.25,"多頭趨勢","空頭趨勢","趨勢整理")];
+  if(Math.abs(heatScore)>0.35) parts.push("短線"+heatLabel);
+  if(Math.abs(momScore)>0.3&&Math.sign(momScore)!==Math.sign(trendScore)&&trendScore!==0)
+    parts.push("動能"+lbl(momScore,0,"偏強","偏弱","轉折"));
+
+  return {
+    trend:   {score:trendScore, label:trendLabel},
+    momentum:{score:momScore,   label:momLabel},
+    heat:    {score:heatScore,  label:heatLabel},
+    volume:  {score:volScore,   label:volLabel2},
+    verdict: parts.join("，")
+  };
+}
 /* ==== ANALYTICS-CORE-END ==== */
 
 /* =========================================================
@@ -756,10 +823,19 @@ function renderStats(){
 
 function renderAudit(){
   var s=STATE.stats;
+  /* 資料品質等級 */
+  var flaggedRows=STATE.rows.filter(function(r){return r.flags&&r.flags.length>0;}).length;
+  var wc=STATE.warnings.length;
+  var grade,reason;
+  if(s.n>=120&&wc===0&&flaggedRows===0){grade="A";reason="資料完整，無修正";}
+  else if(s.n>=60&&wc<=2&&flaggedRows<3){grade="B";reason=(wc?""+wc+" 項解析提醒":"")+
+    (flaggedRows?(wc?" · ":"")+flaggedRows+" 筆 OHLC 修正":"");}
+  else if(s.n>=30){grade="C";reason="資料偏少或有較多異常（"+wc+" 項提醒，"+flaggedRows+" 筆修正）";}
+  else{grade="D";reason="不足 30 筆，指標可信度低";}
   var rows=[
     ["資料來源",esc(STATE.source)],
     ["解析格式",esc(STATE.format)],
-    ["有效筆數",s.n+" 筆"],
+    ["有效筆數",s.n+" 筆　<span class=\"qbadge qbadge-"+grade+"\">"+grade+"</span>　<span style=\"font-size:13px;color:var(--ink3)\">"+esc(reason)+"</span>"],
     ["日期區間",esc(s.from)+" ～ "+esc(s.to)],
     ["解析提醒",STATE.warnings.length?esc(STATE.warnings.join("；")):"無"],
     ["除權息還原","未處理（本頁不判斷資料是否已還原）"],
@@ -780,6 +856,26 @@ function renderSignals(){
   function sig(title,on,formula){
     out.push('<div class="sig'+(on?" on":"")+'"><div class="h">'+title+'</div><div class="f">'+formula+"</div></div>");
   }
+  /* 技術面總評 */
+  var cs=signalConsensus(r,I);
+  function conRow(dim,score,label){
+    var pct=Math.round(Math.abs(score)*50);
+    var left=score>=0?50:Math.round(50+score*50);
+    var cls=score>0.1?"con-fill-pos":score<-0.1?"con-fill-neg":"con-fill-neu";
+    if(pct<2){left=49;pct=2;cls="con-fill-neu";}
+    return '<div class="con-row">'+
+      '<span class="con-dim">'+dim+'</span>'+
+      '<div class="con-bar-wrap"><div class="con-fill '+cls+'" style="left:'+left+'%;width:'+pct+'%"></div></div>'+
+      '<span class="con-label">'+label+'</span></div>';
+  }
+  out.push('<div class="consensus">'+
+    conRow("趨勢",cs.trend.score,cs.trend.label)+
+    conRow("動能",cs.momentum.score,cs.momentum.label)+
+    conRow("冷熱",cs.heat.score,cs.heat.label)+
+    conRow("量能",cs.volume.score,cs.volume.label)+
+    '<div class="con-verdict">'+esc(cs.verdict)+'</div>'+
+    '<div class="con-note">條件式彙整，非預測；詳見下方各指標判斷依據</div>'+
+  '</div>');
   /* MA cross */
   var c=lastCross(I.ma5,I.ma20);
   if(c){

@@ -300,6 +300,40 @@ const pBig5=C.parseInput(big5Csv.text);
 is('Big5 CSV 解析出 2 筆',pBig5.rows.length,2);
 eq('Big5 CSV 收盤價',pBig5.rows[1].close,102);
 
+console.log('\n[21] signalConsensus — 方向與邊界');
+// 準備 120 筆穩定上漲資料（多頭趨勢）
+let px2=50;const upRows=[];
+for(let i=0;i<120;i++){
+  px2*=1.003;
+  upRows.push({date:'d'+i,open:px2*0.999,high:px2*1.005,low:px2*0.995,close:px2,volume:1000+i*10});
+}
+const upInd=C.buildIndicators(upRows);
+const upCs=C.signalConsensus(upRows,upInd);
+is('多頭趨勢 trend.label',upCs.trend.label,'多頭');
+is('多頭趨勢 momentum.label',upCs.momentum.label,'多頭');
+is('多頭時 verdict 含「多頭趨勢」',upCs.verdict.includes('多頭趨勢'),true);
+is('trend.score 在 [-1,1]',upCs.trend.score>=-1&&upCs.trend.score<=1,true);
+is('heat.score 在 [-1,1]',upCs.heat.score>=-1&&upCs.heat.score<=1,true);
+
+// 穩定下跌資料（空頭趨勢）
+let px3=100;const dnRows=[];
+for(let i=0;i<120;i++){
+  px3*=0.997;
+  dnRows.push({date:'d'+i,open:px3*1.001,high:px3*1.005,low:px3*0.995,close:px3,volume:1000});
+}
+const dnInd=C.buildIndicators(dnRows);
+const dnCs=C.signalConsensus(dnRows,dnInd);
+is('空頭趨勢 trend.label',dnCs.trend.label,'空頭');
+is('空頭時 verdict 含「空頭趨勢」',dnCs.verdict.includes('空頭趨勢'),true);
+is('score 為負',dnCs.trend.score<0,true);
+
+// 回傳結構完整性
+is('有 trend 物件',typeof upCs.trend==='object',true);
+is('有 momentum 物件',typeof upCs.momentum==='object',true);
+is('有 heat 物件',typeof upCs.heat==='object',true);
+is('有 volume 物件',typeof upCs.volume==='object',true);
+is('有 verdict 字串',typeof upCs.verdict==='string',true);
+
 console.log('\n=========================');
 console.log('PASS '+pass+' / FAIL '+fail);
 process.exit(fail?1:0);
