@@ -700,7 +700,9 @@ function decodeBytes(buf,forced){
 function signalConsensus(rows,ind){
   var i=rows.length-1, I=ind;
 
-  /* 趨勢：均線排列為主，最近 20 日內交叉為次 */
+  /* 趨勢：均線排列為主，最近 20 日內交叉為次
+     ma.on=true 代表有明確排列（多頭或空頭）；此時 MA5 vs MA60 足以判向
+     （多頭排列定義為 MA5>MA20>MA60，故 MA5>MA60 等價於多頭排列） */
   var ma=maArrangement(I.ma5[i],I.ma20[i],I.ma60[i]);
   var trendScore=ma.on?(I.ma5[i]>I.ma60[i]?1:-1):0;
   var c=lastCross(I.ma5,I.ma20);
@@ -711,22 +713,33 @@ function signalConsensus(rows,ind){
   if(I.osc[i]!==null&&I.dif[i]!==null)
     momScore=I.osc[i]>0&&I.dif[i]>0?1:I.osc[i]>0?0.4:I.osc[i]<0&&I.dif[i]<0?-1:-0.4;
 
-  /* 超買超賣：RSI(14) + K 值平均，正規化到 [-1,1] */
+  /* 超買超賣：RSI(14) + K 值平均，正規化到 [-1,1]
+     正值 = 偏高溫（價格相對強），負值 = 偏低溫；不直接等同多空 */
   var hp=[];
   if(I.rsi14[i]!==null) hp.push((I.rsi14[i]-50)/50);
   if(I.K[i]!==null) hp.push((I.K[i]-50)/50);
   var heatScore=hp.length?Math.max(-1,Math.min(1,hp.reduce(function(a,b){return a+b;},0)/hp.length)):0;
 
-  /* 量能：最新量相對 20 日均量 */
-  var volScore=0;
-  if(I.vma20[i]&&I.vma20[i]>0) volScore=Math.max(-1,Math.min(1,(rows[i].volume/I.vma20[i]-1)*1.5));
+  /* 量能：量價配合方向
+     成交量本身無多空方向，需結合當日漲跌才有意義：
+     放量上漲 = 多方量價配合；放量下跌 = 空方量價配合；縮量則方向性較弱 */
+  var volScore=0, volLabel2="—";
+  if(I.vma20[i]&&I.vma20[i]>0&&i>0){
+    var ratio=rows[i].volume/I.vma20[i];
+    var priceUp=rows[i].close>=rows[i-1].close;
+    var highVol=ratio>=1.3, lowVol=ratio<=0.7;
+    if(highVol&&priceUp)       {volScore= 0.8; volLabel2="多方放量";}
+    else if(highVol&&!priceUp) {volScore=-0.8; volLabel2="空方放量";}
+    else if(lowVol&&priceUp)   {volScore= 0.2; volLabel2="上漲縮量";}
+    else if(lowVol&&!priceUp)  {volScore=-0.2; volLabel2="下跌縮量";}
+    else                       {volScore= 0;   volLabel2="量價正常";}
+  }
 
   /* 標籤 */
   function lbl(s,th,pos,neg,neu){ return s>th?pos:s<-th?neg:neu; }
   var trendLabel=lbl(trendScore,0.25,"多頭","空頭","中性");
   var momLabel  =lbl(momScore,  0.25,"多頭","空頭","中性");
   var heatLabel =lbl(heatScore, 0.35,"過熱","過冷","正常");
-  var volLabel2 =lbl(volScore,  0.25,"偏高","偏弱","正常");
 
   /* 綜合判斷文字 */
   var parts=[lbl(trendScore,0.25,"多頭趨勢","空頭趨勢","趨勢整理")];
@@ -823,19 +836,26 @@ function renderStats(){
 
 function renderAudit(){
   var s=STATE.stats;
-  /* 資料品質等級 */
+  /* 資料品質（只看錯誤率，與筆數無關）*/
   var flaggedRows=STATE.rows.filter(function(r){return r.flags&&r.flags.length>0;}).length;
   var wc=STATE.warnings.length;
-  var grade,reason;
-  if(s.n>=120&&wc===0&&flaggedRows===0){grade="A";reason="資料完整，無修正";}
-  else if(s.n>=60&&wc<=2&&flaggedRows<3){grade="B";reason=(wc?""+wc+" 項解析提醒":"")+
+  var qGrade,qReason;
+  if(wc===0&&flaggedRows===0){qGrade="A";qReason="解析無異常";}
+  else if(wc<=2&&flaggedRows<3){qGrade="B";qReason=(wc?wc+" 項提醒":"")+
     (flaggedRows?(wc?" · ":"")+flaggedRows+" 筆 OHLC 修正":"");}
-  else if(s.n>=30){grade="C";reason="資料偏少或有較多異常（"+wc+" 項提醒，"+flaggedRows+" 筆修正）";}
-  else{grade="D";reason="不足 30 筆，指標可信度低";}
+  else{qGrade="C";qReason=wc+" 項提醒，"+flaggedRows+" 筆修正";}
+  /* 指標樣本量（只看筆數，與品質無關）*/
+  var smLabel,smNote;
+  if(s.n>=120){smLabel="充足";smNote="MA60、MACD 均有足夠收斂期";}
+  else if(s.n>=60){smLabel="足夠";smNote="主要指標可用，長週期 MA 仍在收斂中";}
+  else if(s.n>=30){smLabel="偏少";smNote="短週期指標可用，MA60 / MACD 未完全收斂";}
+  else{smLabel="不足";smNote="不足 30 筆，大多數指標結果不可靠";}
   var rows=[
     ["資料來源",esc(STATE.source)],
     ["解析格式",esc(STATE.format)],
-    ["有效筆數",s.n+" 筆　<span class=\"qbadge qbadge-"+grade+"\">"+grade+"</span>　<span style=\"font-size:13px;color:var(--ink3)\">"+esc(reason)+"</span>"],
+    ["有效筆數",s.n+" 筆"],
+    ["資料品質","<span class=\"qbadge qbadge-"+qGrade+"\">"+qGrade+"</span>　<span style=\"font-size:13px;color:var(--ink3)\">"+esc(qReason)+"</span>"],
+    ["指標樣本量",smLabel+"　<span style=\"font-size:13px;color:var(--ink3)\">"+esc(smNote)+"</span>"],
     ["日期區間",esc(s.from)+" ～ "+esc(s.to)],
     ["解析提醒",STATE.warnings.length?esc(STATE.warnings.join("；")):"無"],
     ["除權息還原","未處理（本頁不判斷資料是否已還原）"],

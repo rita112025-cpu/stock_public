@@ -300,7 +300,7 @@ const pBig5=C.parseInput(big5Csv.text);
 is('Big5 CSV 解析出 2 筆',pBig5.rows.length,2);
 eq('Big5 CSV 收盤價',pBig5.rows[1].close,102);
 
-console.log('\n[21] signalConsensus — 方向與邊界');
+console.log('\n[21] signalConsensus — 方向、邊界、量價配合');
 // 準備 120 筆穩定上漲資料（多頭趨勢）
 let px2=50;const upRows=[];
 for(let i=0;i<120;i++){
@@ -333,6 +333,49 @@ is('有 momentum 物件',typeof upCs.momentum==='object',true);
 is('有 heat 物件',typeof upCs.heat==='object',true);
 is('有 volume 物件',typeof upCs.volume==='object',true);
 is('有 verdict 字串',typeof upCs.verdict==='string',true);
+
+console.log('\n[22] signalConsensus — 邊界與分歧情境');
+// 資料不足（20 筆，MACD / MA60 尚未形成）
+const shortRows=Array.from({length:20},(_,i)=>({date:'d'+i,open:10,high:11,low:9,close:10+i*0.1,volume:500}));
+const shortInd=C.buildIndicators(shortRows);
+const shortCs=C.signalConsensus(shortRows,shortInd);
+is('資料不足時 momentum.score=0（MACD null）',shortCs.momentum.score,0);
+is('資料不足時 trend.score 不超出 [-1,1]',shortCs.trend.score>=-1&&shortCs.trend.score<=1,true);
+is('score 均有值（不拋錯）',typeof shortCs.verdict==='string',true);
+
+// volume=0 不應拋錯
+const zeroVolRows=Array.from({length:60},(_,i)=>({date:'d'+i,open:10,high:11,low:9,close:10,volume:0}));
+const zeroVolInd=C.buildIndicators(zeroVolRows);
+const zeroVolCs=C.signalConsensus(zeroVolRows,zeroVolInd);
+is('volume=0 不拋錯',typeof zeroVolCs.verdict==='string',true);
+is('volume=0 時 volScore=0',zeroVolCs.volume.score,0);
+
+// 量價配合：放量上漲 → 多方放量
+const vpRows=Array.from({length:60},(_,i)=>({date:'d'+i,open:10,high:11,low:9,close:10,volume:1000}));
+vpRows[59]={date:'d59',open:10,high:12,low:10,close:11.5,volume:3500}; // 放量大漲
+const vpInd=C.buildIndicators(vpRows);
+const vpCs=C.signalConsensus(vpRows,vpInd);
+is('放量上漲 → 多方放量',vpCs.volume.label,'多方放量');
+is('放量上漲 volScore > 0',vpCs.volume.score>0,true);
+
+// 量價配合：放量下跌 → 空方放量
+const vpRows2=Array.from({length:60},(_,i)=>({date:'d'+i,open:10,high:11,low:9,close:10,volume:1000}));
+vpRows2[59]={date:'d59',open:10,high:10,low:7,close:7.5,volume:3500}; // 放量重跌
+const vpInd2=C.buildIndicators(vpRows2);
+const vpCs2=C.signalConsensus(vpRows2,vpInd2);
+is('放量下跌 → 空方放量',vpCs2.volume.label,'空方放量');
+is('放量下跌 volScore < 0',vpCs2.volume.score<0,true);
+
+// MA 多頭 + MACD 空頭（分歧）：verdict 不應稱「多頭趨勢」消失（只驗結構不拋錯）
+// 120 筆先漲後跌製造分歧
+let mxPx=50;const mxRows=[];
+for(let i=0;i<80;i++){mxPx*=1.005;mxRows.push({date:'d'+i,open:mxPx,high:mxPx*1.005,low:mxPx*0.995,close:mxPx,volume:1000});}
+for(let i=80;i<120;i++){mxPx*=0.994;mxRows.push({date:'d'+i,open:mxPx,high:mxPx*1.005,low:mxPx*0.995,close:mxPx,volume:1000});}
+const mxInd=C.buildIndicators(mxRows);
+const mxCs=C.signalConsensus(mxRows,mxInd);
+is('分歧情境 verdict 不拋錯',typeof mxCs.verdict==='string',true);
+is('分歧時 score 仍在邊界',mxCs.trend.score>=-1&&mxCs.trend.score<=1,true);
+is('分歧時 momentum.score 仍在邊界',mxCs.momentum.score>=-1&&mxCs.momentum.score<=1,true);
 
 console.log('\n=========================');
 console.log('PASS '+pass+' / FAIL '+fail);
