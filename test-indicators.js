@@ -461,6 +461,110 @@ is('csvCell: null → empty string',
 is('csvCell: undefined → empty string',
   C.csvCell(undefined), '');
 
+console.log('\n[25] backtest engine — look-ahead, non-overlap, stats');
+// Build 60-bar rising dataset for controlled tests
+var btRows=(function(){
+  var rows=[],px=100;
+  for(var i=0;i<60;i++){
+    px*=1.008;
+    rows.push({date:'2025-'+(i<9?'0':'')+(i+1)+'-01',
+               open:px*0.998,high:px*1.01,low:px*0.99,close:px,volume:1000+i*20});
+  }
+  return rows;
+})();
+var btInd=C.buildIndicators(btRows);
+
+// No signal function → 0 trades
+var res0=C.backtest(btRows,btInd,function(){return false;},5);
+is('[25] no signal → 0 trades',res0.trades.length,0);
+is('[25] no signal → stats null',res0.stats,null);
+
+// Always-on signal with holdDays=5: last eligible signal at rows.length-1-5=54
+// Entry at 55, exit at 59, all within bounds
+var res5=C.backtest(btRows,btInd,function(r,ind,i){return true;},5);
+is('[25] always-on hold=5 non-overlap: first trade signal day','2025-01-01',res5.trades[0].signalDate);
+is('[25] always-on hold=5 non-overlap: second signal after first exit',
+   res5.trades[1].signalDate>res5.trades[0].exitDate,true);
+
+// Look-ahead bias: loop bound is i+1+holdDays<n, so i<n-1-holdDays
+// Signal at last bar (i=n-1) → outside loop → 0 trades
+var lastOnlyFn=function(r,ind,i){return i===r.length-1;};
+var resLast=C.backtest(btRows,btInd,lastOnlyFn,1);
+is('[25] signal at last bar → no trade',resLast.trades.length,0);
+
+// Signal one step inside boundary: i=n-2-holdDays → exitIdx=i+1+holdDays=n-1 (last bar)
+// For holdDays=1, n=60: i=57, entry=58, exit=59
+var boundaryFn=function(r,ind,i){return i===r.length-2-1;};// n-3 for holdDays=1
+var resBoundary=C.backtest(btRows,btInd,boundaryFn,1);
+is('[25] signal at last eligible index → 1 trade',resBoundary.trades.length,1);
+is('[25] exit at last bar',resBoundary.trades[0].exitDate,btRows[btRows.length-1].date);
+
+// Signal one step past boundary: i=n-1-holdDays → loop excludes this → 0 trades
+// For holdDays=1, n=60: i=58, loop needs i<58, so i=58 is excluded
+var pastBoundaryFn=function(r,ind,i){return i===r.length-1-1;};// n-2 for holdDays=1
+var resPastBoundary=C.backtest(btRows,btInd,pastBoundaryFn,1);
+is('[25] signal just past eligible boundary → no trade',resPastBoundary.trades.length,0);
+
+// Known return verification
+// Manually place 3 signals: returns 0.10, -0.05, 0.08
+var mockTrades=[{ret:0.10},{ret:-0.05},{ret:0.08}];
+var btS=C.calcBtStats(mockTrades);
+is('[25] winCount',btS.winCount,2);
+is('[25] winRate',parseFloat(btS.winRate.toFixed(4)),parseFloat((2/3).toFixed(4)));
+is('[25] avgReturn',parseFloat(btS.avgReturn.toFixed(6)),parseFloat(((0.10-0.05+0.08)/3).toFixed(6)));
+is('[25] medianReturn',parseFloat(btS.medianReturn.toFixed(4)),0.08); // sorted: -0.05,0.08,0.10 → mid=0.08
+is('[25] maxGain',parseFloat(btS.maxGain.toFixed(4)),0.10);
+is('[25] maxLoss',parseFloat(btS.maxLoss.toFixed(4)),-0.05);
+is('[25] maxConsecLoss',btS.maxConsecLoss,1); // only one loss in sequence
+
+// MDD: equity 1→1.10 (peak)→1.10*0.95=1.045→1.045*1.08=1.1286
+// Worst drawdown: (1.045-1.10)/1.10 = -0.055/1.10 = -0.05 exactly
+is('[25] mdd exact (peak 1.10, trough 1.045)',parseFloat(btS.mdd.toFixed(5)),-0.05);
+
+console.log('\n[26] btSignalGoldenCross / btSignalMaBull (mock indicators)');
+// Use mock indicator arrays to test signal logic independently of data generation
+var mockRows=[{},{},{}]; // rows not inspected by signal functions
+
+// ── Golden cross tests ────────────────────────────────────────────────────
+// i=2: ma5 crosses from below (9.5→10.5) over ma20 (10)
+var gcInd={ma5:[null,9.5,10.5],ma20:[null,10.0,10.0],
+           ma60:[null,null,null],dif:[null,null,null],dea:[null,null,null],rsi14:[null,null,null]};
+is('[26] golden cross at i=2',C.btSignalGoldenCross(mockRows,gcInd,2),true);
+is('[26] before cross: no signal at i=1',C.btSignalGoldenCross(mockRows,gcInd,1),false);
+is('[26] golden cross at i=0 → false (no prev bar)',C.btSignalGoldenCross(mockRows,gcInd,0),false);
+
+// Already above: MA5 was already above MA20, no new cross
+var alreadyAboveInd={ma5:[null,11,12],ma20:[null,10,10],
+                     ma60:[null,null,null],dif:[null,null,null],dea:[null,null,null],rsi14:[null,null,null]};
+is('[26] no cross when already above',C.btSignalGoldenCross(mockRows,alreadyAboveInd,2),false);
+
+// Null MA → false
+var nullGcInd={ma5:[null,null,null],ma20:[null,null,null],
+               ma60:[null,null,null],dif:[null,null,null],dea:[null,null,null],rsi14:[null,null,null]};
+is('[26] null MA → golden cross false',C.btSignalGoldenCross(mockRows,nullGcInd,1),false);
+
+// ── btSignalMaBull tests ──────────────────────────────────────────────────
+// All conditions met: MA5>MA20>MA60, DIF>DEA, RSI<70
+var mockBull={ma5:[50],ma20:[45],ma60:[40],dif:[1],dea:[0.5],rsi14:[60]};
+var mockBullRows=[{}];
+is('[26] btSignalMaBull all conditions met',C.btSignalMaBull(mockBullRows,mockBull,0),true);
+
+// RSI >= 70 → false
+var mockHighRsi={ma5:[50],ma20:[45],ma60:[40],dif:[1],dea:[0.5],rsi14:[70]};
+is('[26] btSignalMaBull RSI=70 → false',C.btSignalMaBull(mockBullRows,mockHighRsi,0),false);
+
+// MA not in order (MA20 < MA60) → false
+var mockBadMa={ma5:[50],ma20:[35],ma60:[40],dif:[1],dea:[0.5],rsi14:[60]};
+is('[26] btSignalMaBull MA20<MA60 → false',C.btSignalMaBull(mockBullRows,mockBadMa,0),false);
+
+// DIF <= DEA → false
+var mockBearMacd={ma5:[50],ma20:[45],ma60:[40],dif:[0.5],dea:[0.5],rsi14:[60]};
+is('[26] btSignalMaBull dif==dea → false',C.btSignalMaBull(mockBullRows,mockBearMacd,0),false);
+
+// Null MA → false
+var mockNullMa={ma5:[null],ma20:[null],ma60:[null],dif:[null],dea:[null],rsi14:[null]};
+is('[26] btSignalMaBull null MA → false',C.btSignalMaBull(mockBullRows,mockNullMa,0),false);
+
 console.log('\n=========================');
 console.log('PASS '+pass+' / FAIL '+fail);
 process.exit(fail?1:0);

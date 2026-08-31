@@ -179,6 +179,28 @@ td.num,th.num{font-family:var(--mono)}
   canvas{max-width:100% !important}
 }
 
+/* ---------- backtest ---------- */
+.bt-ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.bt-ctrl select{font:inherit;padding:3px 6px;border:1px solid var(--border);border-radius:3px;background:var(--bg)}
+.bt-ctrl button{padding:4px 14px;font:inherit;font-size:14px;cursor:pointer;
+  border:1px solid var(--border);border-radius:3px;background:var(--bg)}
+.bt-ctrl button:hover{background:var(--panel)}
+.bt-disc{font-size:12.5px;color:var(--ink3);margin-bottom:10px;line-height:1.7}
+.bt-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-bottom:14px}
+.bt-stat{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:6px 10px;text-align:center}
+.bt-stat .bs-l{font-size:12px;color:var(--ink3)}
+.bt-stat .bs-v{font-size:17px;font-family:var(--mono);font-weight:600;color:var(--ink1)}
+.bt-stat .bs-v.pos{color:var(--ok)}.bt-stat .bs-v.neg{color:var(--flag)}
+.bt-tbl{width:100%;border-collapse:collapse;font-size:13px;font-family:var(--mono)}
+.bt-tbl th{background:var(--panel);padding:4px 8px;text-align:right;font-weight:600;
+  border-bottom:1px solid var(--border);white-space:nowrap}
+.bt-tbl th:first-child{text-align:left}
+.bt-tbl td{padding:3px 8px;text-align:right;border-bottom:1px solid var(--border)}
+.bt-tbl td:first-child{text-align:left}
+.bt-tbl tr.win td:last-child{color:var(--ok)}
+.bt-tbl tr.loss td:last-child{color:var(--flag)}
+.bt-empty{color:var(--ink3);font-size:14px;padding:12px 0}
+
 /* ---------- audit ---------- */
 .audit{font-family:var(--mono);font-size:14.5px;color:var(--ink2)}
 .audit dt{color:var(--ink3);margin-top:7px;font-size:13.5px;letter-spacing:.05em}
@@ -330,6 +352,30 @@ footer{margin-top:28px;padding-top:12px;border-top:1px solid var(--rule);font-si
     <h2>規則觸發狀態 <span class="tag tag-rule">規則</span></h2>
     <p class="hint">以下只是「條件式是否成立」的陳述，附上判斷式與觸發日期。<strong>本頁未做任何回測</strong>，無法驗證這些條件的實際勝率，不構成投資建議。</p>
     <div id="sigList"></div>
+  </section>
+
+  <section class="panel" id="btPanel" hidden>
+    <h2>歷史回測 <span class="tag tag-rule">實驗性</span></h2>
+    <div class="bt-ctrl">
+      <label>訊號：<select id="btSignal">
+        <option value="goldenCross">MA5 黃金交叉 MA20</option>
+        <option value="maBull">MA 多頭排列＋MACD 多頭＋RSI &lt; 70</option>
+      </select></label>
+      <label>持有：<select id="btHold">
+        <option value="5">5 個交易日</option>
+        <option value="10" selected>10 個交易日</option>
+        <option value="20">20 個交易日</option>
+      </select></label>
+      <button id="btnBt">執行回測</button>
+    </div>
+    <p class="bt-disc">
+      ⚠ <strong>未除權息還原</strong>（長期持有報酬率可能低估）．
+      進場：訊號日 T+1 <strong>開盤</strong>價．
+      出場：T+N <strong>收盤</strong>價（N = 持有日數）．
+      持有期間不重複開倉．
+      <strong>未含手續費與滑點</strong>，數字僅供參考，不構成投資建議。
+    </p>
+    <div id="btResult"></div>
   </section>
 
   <section class="panel" id="tablePanel" hidden>
@@ -802,6 +848,66 @@ function signalConsensus(rows,ind){
     verdict: parts.join("，")
   };
 }
+
+/* ---------- backtest ---------- */
+/* T 日收盤訊號 → T+1 開盤進場 → T+1+N 收盤出場（持有 N 個交易日）
+   不重複開倉：持有期間跳過後續訊號 */
+function backtest(rows, ind, signalFn, holdDays){
+  var trades=[], n=rows.length, nextEligible=0;
+  for(var i=0;i+1+holdDays<n;i++){
+    if(i<nextEligible) continue;
+    if(!signalFn(rows,ind,i)) continue;
+    var entryBar=rows[i+1];
+    if(!entryBar||entryBar.open==null) continue;
+    var exitBar=rows[i+1+holdDays];
+    if(!exitBar||exitBar.close==null) continue;
+    var ret=(exitBar.close-entryBar.open)/entryBar.open;
+    trades.push({signalDate:rows[i].date,entryDate:entryBar.date,entryPrice:entryBar.open,
+                 exitDate:exitBar.date,exitPrice:exitBar.close,ret:ret});
+    nextEligible=i+holdDays+2;
+  }
+  return {trades:trades,stats:calcBtStats(trades)};
+}
+function calcBtStats(trades){
+  if(!trades||!trades.length) return null;
+  var rets=trades.map(function(t){return t.ret;});
+  var wins=rets.filter(function(r){return r>0;}).length;
+  var sorted=rets.slice().sort(function(a,b){return a-b;});
+  var sum=rets.reduce(function(a,b){return a+b;},0);
+  var mid=Math.floor(sorted.length/2);
+  var med=sorted.length%2===0?(sorted[mid-1]+sorted[mid])/2:sorted[mid];
+  var equity=1,peak=1,mdd=0,consec=0,maxConsec=0;
+  for(var i=0;i<rets.length;i++){
+    equity*=(1+rets[i]);
+    if(equity>peak) peak=equity;
+    var dd=(equity-peak)/peak;
+    if(dd<mdd) mdd=dd;
+    if(rets[i]<0){consec++;if(consec>maxConsec) maxConsec=consec;}
+    else consec=0;
+  }
+  return{count:trades.length,winCount:wins,winRate:wins/trades.length,
+         avgReturn:sum/trades.length,medianReturn:med,
+         maxGain:sorted[sorted.length-1],maxLoss:sorted[0],
+         maxConsecLoss:maxConsec,mdd:mdd};
+}
+/* 訊號函式：MA5 黃金交叉 MA20（T-1 死叉，T 金叉） */
+function btSignalGoldenCross(rows,ind,i){
+  if(i<1) return false;
+  var p5=ind.ma5[i-1],p20=ind.ma20[i-1],c5=ind.ma5[i],c20=ind.ma20[i];
+  if(p5==null||p20==null||c5==null||c20==null) return false;
+  return p5<p20&&c5>=c20;
+}
+/* 訊號函式：MA多頭排列 + MACD 多頭 + RSI 未過熱（< 70） */
+function btSignalMaBull(rows,ind,i){
+  var ma5=ind.ma5[i],ma20=ind.ma20[i],ma60=ind.ma60[i];
+  if(ma5==null||ma20==null||ma60==null) return false;
+  if(!(ma5>ma20&&ma20>ma60)) return false;
+  var dif=ind.dif[i],dea=ind.dea[i];
+  if(dif==null||dea==null||dif<=dea) return false;
+  var rsi=ind.rsi14[i];
+  if(rsi==null||rsi>=70) return false;
+  return true;
+}
 /* ==== ANALYTICS-CORE-END ==== */
 
 /* =========================================================
@@ -860,7 +966,7 @@ function loadText(text,sourceLabel){
 function render(){
   if(!STATE.rows) return;
   $("emptyPanel").hidden=true;
-  ["statPanel","chartPanel","sigPanel","tablePanel"].forEach(function(id){$(id).hidden=false;});
+  ["statPanel","chartPanel","sigPanel","btPanel","tablePanel"].forEach(function(id){$(id).hidden=false;});
   $("btnExport").disabled=false;
   $("btnPrint").disabled=false;
   renderStats(); renderAudit(); renderSignals(); renderTable(); drawChart();
@@ -989,6 +1095,49 @@ function renderSignals(){
       "最新量="+fmtInt(r[i].volume)+"　20日均量="+fmtInt(I.vma20[i]));
   }
   $("sigList").innerHTML=out.join("");
+}
+
+function renderBacktest(){
+  var r=STATE.rows,I=STATE.ind;
+  var sigKey=$("btSignal").value;
+  var holdDays=parseInt($("btHold").value,10);
+  var sigFn=sigKey==="goldenCross"?btSignalGoldenCross:btSignalMaBull;
+  var res=backtest(r,I,sigFn,holdDays);
+  var trades=res.trades,s=res.stats,el=$("btResult");
+  if(!trades.length){
+    el.innerHTML='<p class="bt-empty">此資料區間內無符合訊號，無回測紀錄。</p>';
+    return;
+  }
+  var pct=function(v,d){return v==null?"—":(v*100).toFixed(d==null?1:d)+"%";};
+  var statsHtml='<div class="bt-stats">'+
+    stat("交易次數",s.count,false,0)+
+    stat("勝率",pct(s.winRate,1),s.winRate>=0.5,s.winRate<0.5)+
+    stat("平均報酬",pct(s.avgReturn),s.avgReturn>0,s.avgReturn<0)+
+    stat("中位數報酬",pct(s.medianReturn),s.medianReturn>0,s.medianReturn<0)+
+    stat("最大獲利",pct(s.maxGain),s.maxGain>0,s.maxGain<0)+
+    stat("最大虧損",pct(s.maxLoss),s.maxLoss>0,s.maxLoss<0)+
+    stat("最大連敗",s.maxConsecLoss,false,s.maxConsecLoss>=3)+
+    stat("策略 MDD",pct(s.mdd),false,s.mdd<-0.1)+
+    '</div>';
+  function stat(lbl,val,pos,neg){
+    var cls="bs-v"+(pos?" pos":neg?" neg":"");
+    return '<div class="bt-stat"><div class="bs-l">'+lbl+'</div><div class="'+cls+'">'+val+'</div></div>';
+  }
+  var SHOW=Math.min(trades.length,30);
+  var rows2='<div class="scroller"><table class="bt-tbl"><thead><tr>'+
+    '<th>訊號日</th><th>進場日</th><th>進場價</th><th>出場日</th><th>出場價</th><th>報酬</th></tr></thead><tbody>';
+  for(var i=0;i<SHOW;i++){
+    var t=trades[i],win=t.ret>0;
+    rows2+='<tr class="'+(win?"win":"loss")+'">'+
+      '<td>'+esc(t.signalDate)+'</td><td>'+esc(t.entryDate)+'</td>'+
+      '<td>'+t.entryPrice.toFixed(2)+'</td>'+
+      '<td>'+esc(t.exitDate)+'</td>'+
+      '<td>'+t.exitPrice.toFixed(2)+'</td>'+
+      '<td>'+(t.ret>=0?"+":"")+pct(t.ret,2)+'</td></tr>';
+  }
+  rows2+='</tbody></table></div>';
+  if(trades.length>SHOW) rows2+='<p class="bt-disc">僅顯示前 '+SHOW+' 筆，共 '+trades.length+' 筆。</p>';
+  el.innerHTML=statsHtml+rows2;
 }
 
 function renderTable(){
@@ -1351,7 +1500,7 @@ $("btnDemo").addEventListener("click",function(){
 $("btnClear").addEventListener("click",function(){
   $("pasteArea").value=""; clearMsg($("parseMsg"));
   STATE.rows=null; STATE.hoverIdx=null; $("emptyPanel").hidden=false;
-  ["statPanel","chartPanel","sigPanel","tablePanel"].forEach(function(id){$(id).hidden=true;});
+  ["statPanel","chartPanel","sigPanel","btPanel","tablePanel"].forEach(function(id){$(id).hidden=true;});
   $("btnExport").disabled=true;
   $("btnPrint").disabled=true;
   $("auditBox").innerHTML="<dt>狀態</dt><dd>尚未載入資料</dd>";
@@ -1372,6 +1521,7 @@ $("fileInput").addEventListener("change",function(e){
   fr.readAsArrayBuffer(f);
 });
 $("btnExport").addEventListener("click",exportCSV);
+$("btnBt").addEventListener("click",function(){ if(STATE.rows) renderBacktest(); });
 $("btnPrint").addEventListener("click",function(){
   var label=STATE.label||"（未輸入股票代號）";
   var s=STATE.stats;
