@@ -422,6 +422,45 @@ if(mxCs.trend.score>0&&mxCs.momentum.score<-0.3){
   is('無排列無交叉 trend.score=0',crossCs.trend.score,0);
 }
 
+console.log('\n[24] labelFromFileName / splitCodeName / csvCell');
+// ── labelFromFileName ──────────────────────────────────────────────────────
+is('labelFromFileName: 3037_欣興.csv',
+  C.labelFromFileName('3037_欣興.csv'), '3037 欣興');
+is('labelFromFileName: strip _indicators suffix',
+  C.labelFromFileName('3037_欣興_indicators.csv'), '3037 欣興');
+is('labelFromFileName: 2330_台積電_2026.csv (trailing token kept)',
+  C.labelFromFileName('2330_台積電_2026.csv'), '2330 台積電 2026');
+is('labelFromFileName: 台積電.csv (name only)',
+  C.labelFromFileName('台積電.csv'), '台積電');
+is('labelFromFileName: strip -indicators suffix (hyphen)',
+  C.labelFromFileName('3037_欣興-indicators.csv'), '3037 欣興');
+is('labelFromFileName: empty string',
+  C.labelFromFileName(''), '');
+
+// ── splitCodeName ─────────────────────────────────────────────────────────
+is('splitCodeName: "3037 欣興" → code+name',
+  JSON.stringify(C.splitCodeName('3037 欣興')), '{"code":"3037","name":"欣興"}');
+is('splitCodeName: "台積電" → name only',
+  JSON.stringify(C.splitCodeName('台積電')), '{"code":"","name":"台積電"}');
+is('splitCodeName: "" → both empty',
+  JSON.stringify(C.splitCodeName('')), '{"code":"","name":""}');
+is('splitCodeName: pure code "2330" → code, name empty',
+  JSON.stringify(C.splitCodeName('2330')), '{"code":"2330","name":""}');
+
+// ── csvCell ───────────────────────────────────────────────────────────────
+is('csvCell: plain value — no quoting',
+  C.csvCell('3037'), '3037');
+is('csvCell: comma — must quote',
+  C.csvCell('欣興,測試'), '"欣興,測試"');
+is('csvCell: embedded double-quote — must double',
+  C.csvCell('欣興"特殊'), '"欣興""特殊"');
+is('csvCell: newline — must quote',
+  C.csvCell('第一行\n第二行'), '"第一行\n第二行"');
+is('csvCell: null → empty string',
+  C.csvCell(null), '');
+is('csvCell: undefined → empty string',
+  C.csvCell(undefined), '');
+
 console.log('\n=========================');
 console.log('PASS '+pass+' / FAIL '+fail);
 process.exit(fail?1:0);

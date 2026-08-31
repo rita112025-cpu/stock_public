@@ -1245,6 +1245,7 @@ function hover(ev){
 }
 
 /* ---------- export ---------- */
+/* ==== EXPORT-HELPERS-START ==== */
 /* 由檔名推回「代號 名稱」，例：3037_欣興.csv -> "3037 欣興" */
 function labelFromFileName(fname){
   var b=String(fname||"").replace(/\.[^.]+$/,"");
@@ -1266,6 +1267,7 @@ function csvCell(v){
   var t=(v===null||v===undefined)?"":String(v);
   return /[",\r\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t;
 }
+/* ==== EXPORT-HELPERS-END ==== */
 function exportCSV(){
   var r=STATE.rows,I=STATE.ind;
   var id=splitCodeName(STATE.label);
