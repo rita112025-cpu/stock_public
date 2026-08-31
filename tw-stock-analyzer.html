@@ -143,6 +143,42 @@ td.num,th.num{font-family:var(--mono)}
 .qbadge-C{color:var(--flag);border-color:var(--flag)}
 .qbadge-D{color:var(--up);border-color:var(--up)}
 
+/* ---------- print / PDF ---------- */
+.print-hd{display:none}
+@media print{
+  @page{margin:15mm 12mm;size:A4 portrait}
+  body{font-size:13px;background:#fff;color:#000}
+  .wrap{padding:0;max-width:100%}
+  /* show print header */
+  .print-hd{display:block;border-bottom:2px solid #171A1F;padding-bottom:8px;margin-bottom:14px}
+  .print-hd .ph-kicker{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#4A525C;margin-bottom:4px}
+  .print-hd .ph-title{font-family:var(--serif);font-size:22px;font-weight:600;margin:0 0 2px}
+  .print-hd .ph-meta{font-family:var(--mono);font-size:12px;color:#79838E;margin:0}
+  /* hide interactive UI */
+  .masthead,.grid > div:first-child,
+  #parseMsg,details,.row,
+  #emptyPanel{display:none !important}
+  /* layout */
+  .grid{display:block}
+  .panel{border:1px solid #CBD3DA !important;margin-bottom:10px;padding:10px 12px;break-inside:avoid;page-break-inside:avoid}
+  .panel > h2{font-size:15px}
+  [hidden]{display:block !important}
+  /* stats */
+  .stats{grid-template-columns:repeat(4,1fr)}
+  .stat .v{font-size:18px}
+  /* signals */
+  .consensus{background:#FAFBFC !important}
+  .con-fill-pos,.con-fill-neg,.con-fill-neu{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  /* table */
+  .scroller{overflow:visible}
+  table{font-size:12px}
+  th,td{padding:3px 5px}
+  /* page break */
+  #tablePanel{break-before:page;page-break-before:always}
+  /* canvas */
+  canvas{max-width:100% !important}
+}
+
 /* ---------- audit ---------- */
 .audit{font-family:var(--mono);font-size:14.5px;color:var(--ink2)}
 .audit dt{color:var(--ink3);margin-top:7px;font-size:13.5px;letter-spacing:.05em}
@@ -158,6 +194,13 @@ footer{margin-top:28px;padding-top:12px;border-top:1px solid var(--rule);font-si
 </head>
 <body>
 <div class="wrap">
+
+<!-- 列印 / PDF 專用標頭（螢幕不顯示） -->
+<div class="print-hd" id="printHd">
+  <div class="ph-kicker">TWSE / TPEx · 日線技術分析工作台</div>
+  <div class="ph-title" id="printTitle"></div>
+  <div class="ph-meta" id="printMeta"></div>
+</div>
 
 <header class="masthead">
   <div class="kicker">TWSE / TPEx · 日線技術分析工作台</div>
@@ -237,7 +280,10 @@ footer{margin-top:28px;padding-top:12px;border-top:1px solid var(--rule);font-si
     <dl class="audit" id="auditBox">
       <dt>狀態</dt><dd>尚未載入資料</dd>
     </dl>
-    <div class="row"><button class="ghost" id="btnExport" disabled>下載計算結果 CSV</button></div>
+    <div class="row">
+      <button class="ghost" id="btnExport" disabled>下載計算結果 CSV</button>
+      <button class="ghost" id="btnPrint" disabled>列印 / 下載 PDF</button>
+    </div>
   </section>
 
 </div>
@@ -816,6 +862,7 @@ function render(){
   $("emptyPanel").hidden=true;
   ["statPanel","chartPanel","sigPanel","tablePanel"].forEach(function(id){$(id).hidden=false;});
   $("btnExport").disabled=false;
+  $("btnPrint").disabled=false;
   renderStats(); renderAudit(); renderSignals(); renderTable(); drawChart();
 }
 
@@ -1281,6 +1328,7 @@ $("btnClear").addEventListener("click",function(){
   STATE.rows=null; STATE.hoverIdx=null; $("emptyPanel").hidden=false;
   ["statPanel","chartPanel","sigPanel","tablePanel"].forEach(function(id){$(id).hidden=true;});
   $("btnExport").disabled=true;
+  $("btnPrint").disabled=true;
   $("auditBox").innerHTML="<dt>狀態</dt><dd>尚未載入資料</dd>";
 });
 $("fileInput").addEventListener("change",function(e){
@@ -1295,6 +1343,15 @@ $("fileInput").addEventListener("change",function(e){
   fr.readAsArrayBuffer(f);
 });
 $("btnExport").addEventListener("click",exportCSV);
+$("btnPrint").addEventListener("click",function(){
+  var label=STATE.label||"（未輸入股票代號）";
+  var s=STATE.stats;
+  $("printTitle").textContent=label;
+  $("printMeta").textContent=
+    "資料區間："+esc(s.from)+" ～ "+esc(s.to)+"　有效筆數："+s.n+" 筆　"+
+    "列印時間："+new Date().toLocaleString("zh-TW",{hour12:false});
+  window.print();
+});
 $("stockCode").addEventListener("input",function(){ STATE.label=$("stockCode").value.trim(); if(STATE.rows) renderLegend(); });
 $("apiPick").addEventListener("change",function(){
   var custom=$("apiPick").value==="custom";
