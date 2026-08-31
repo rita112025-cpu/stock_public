@@ -722,8 +722,9 @@ function signalConsensus(rows,ind){
 
   /* 量能：量價配合方向
      成交量本身無多空方向，需結合當日漲跌才有意義：
-     放量上漲 = 多方量價配合；放量下跌 = 空方量價配合；縮量則方向性較弱 */
-  var volScore=0, volLabel2="—";
+     放量上漲 = 多方量價配合；放量下跌 = 空方量價配合；縮量則方向性較弱
+     score=null 代表無法判斷（資料不足 20 筆）；score=0 代表量價正常（語意不同） */
+  var volScore=null, volLabel2="資料不足";
   if(I.vma20[i]&&I.vma20[i]>0&&i>0){
     var ratio=rows[i].volume/I.vma20[i];
     var priceUp=rows[i].close>=rows[i-1].close;
@@ -879,6 +880,12 @@ function renderSignals(){
   /* 技術面總評 */
   var cs=signalConsensus(r,I);
   function conRow(dim,score,label){
+    if(score===null){
+      return '<div class="con-row">'+
+        '<span class="con-dim">'+dim+'</span>'+
+        '<div class="con-bar-wrap"></div>'+
+        '<span class="con-label" style="color:var(--ink3)">'+label+'</span></div>';
+    }
     var pct=Math.round(Math.abs(score)*50);
     var left=score>=0?50:Math.round(50+score*50);
     var cls=score>0.1?"con-fill-pos":score<-0.1?"con-fill-neg":"con-fill-neu";
